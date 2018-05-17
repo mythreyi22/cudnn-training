@@ -10,8 +10,8 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#ifndef __CUDNN_TRAINING_READUBYTE_H
-#define __CUDNN_TRAINING_READUBYTE_H
+#ifndef __HIPDNN_TRAINING_READUBYTE_H
+#define __HIPNN_TRAINING_READUBYTE_H
 
 #include <cstdint>
 #include <cstddef>
