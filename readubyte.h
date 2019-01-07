@@ -11,7 +11,7 @@
  */
 
 #ifndef __HIPDNN_TRAINING_READUBYTE_H
-#define __HIPNN_TRAINING_READUBYTE_H
+#define __HIPDNN_TRAINING_READUBYTE_H
 
 #include <cstdint>
 #include <cstddef>

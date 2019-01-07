@@ -28,11 +28,9 @@
 #include <vector>
 
 #include <hip/hip_runtime.h>
-//#include <hip/nvcc_detail/hip_runtime.h>
-#include <device_launch_parameters.h>
 
 #include <hipblas.h>
-#include <hipDNN.h>
+#include <hipdnn.h>
 
 #include "readubyte.h"
 
@@ -81,7 +79,7 @@ void SavePGMFile(const unsigned char *data, size_t width, size_t height, const c
 
 //////////////////////////////////////////////////////////////////////////////
 // Error handling
-// Adapted from the CUDNN classification code 
+// Adapted from the CUDNN classification code
 // sample: https://developer.nvidia.com/cuDNN
 
 #define FatalError(s) do {                                             \
@@ -120,7 +118,7 @@ DEFINE_int32(random_seed, -1, "Override random seed (default uses std::random_de
 DEFINE_int32(classify, -1, "Number of images to classify to compute error rate (default uses entire test set)");
 
 // Batch parameters
-DEFINE_uint64(batch_size, 64, "Batch size for training");
+DEFINE_uint64(batch_size, 32, "Batch size for training");
 
 // Filenames
 DEFINE_bool(pretrained, false, "Use the pretrained CUDNN model as input");
@@ -148,9 +146,9 @@ struct ConvBiasLayer
     int in_width, in_height, out_width, out_height;
 
     std::vector<float> pconv, pbias;
-    
-    ConvBiasLayer(int in_channels_, int out_channels_, int kernel_size_, 
-                  int in_w_, int in_h_) : pconv(in_channels_ * kernel_size_ * kernel_size_ * out_channels_), 
+
+    ConvBiasLayer(int in_channels_, int out_channels_, int kernel_size_,
+                  int in_w_, int in_h_) : pconv(in_channels_ * kernel_size_ * kernel_size_ * out_channels_),
                   pbias(out_channels_)
     {
         in_channels = in_channels_;
@@ -167,7 +165,7 @@ struct ConvBiasLayer
         std::stringstream ssf, ssbf;
         ssf << fileprefix << ".bin";
         ssbf << fileprefix << ".bias.bin";
-        
+
         // Read weights file
         FILE *fp = fopen(ssf.str().c_str(), "rb");
         if (!fp)
@@ -341,7 +339,7 @@ struct TrainingContext
     hipdnnHandle_t hipdnnHandle;
     hipblasHandle_t hipblasHandle;
 
-    hipdnnTensorDescriptor_t dataTensor, conv1Tensor, conv1BiasTensor, pool1Tensor, 
+    hipdnnTensorDescriptor_t dataTensor, conv1Tensor, conv1BiasTensor, pool1Tensor,
                              conv2Tensor, conv2BiasTensor, pool2Tensor, fc1Tensor, fc2Tensor;
     hipdnnFilterDescriptor_t conv1filterDesc, conv2filterDesc;
     hipdnnConvolutionDescriptor_t conv1Desc, conv2Desc;
@@ -391,9 +389,8 @@ struct TrainingContext
         checkHIPDNN(hipdnnCreateConvolutionDescriptor(&conv1Desc));
         checkHIPDNN(hipdnnCreateConvolutionDescriptor(&conv2Desc));
 
-        checkHIPDNN(hipdnnCreatePoolingDescriptor(&poolDesc));            
+        checkHIPDNN(hipdnnCreatePoolingDescriptor(&poolDesc));
 
-        
         // Set tensor descriptor sizes
         checkHIPDNN(hipdnnSetTensor4dDescriptor(conv1BiasTensor,
                                               HIPDNN_TENSOR_NCHW,
@@ -405,7 +402,7 @@ struct TrainingContext
                                               HIPDNN_DATA_FLOAT,
                                               1, conv2.out_channels,
                                               1, 1));
-            
+
         checkHIPDNN(hipdnnSetPooling2dDescriptor(poolDesc,
                                                HIPDNN_POOLING_MAX,
                                                HIPDNN_PROPAGATE_NAN,
@@ -470,7 +467,7 @@ struct TrainingContext
     }
 
     size_t SetFwdConvolutionTensors(ConvBiasLayer& conv, hipdnnTensorDescriptor_t& srcTensorDesc, hipdnnTensorDescriptor_t& dstTensorDesc,
-                                    hipdnnFilterDescriptor_t& filterDesc, hipdnnConvolutionDescriptor_t& convDesc, 
+                                    hipdnnFilterDescriptor_t& filterDesc, hipdnnConvolutionDescriptor_t& convDesc,
                                     hipdnnConvolutionFwdAlgo_t& algo)
     {
         size_t sizeInBytes = 0;
@@ -481,6 +478,8 @@ struct TrainingContext
         int w = conv.in_width;
         int oc = conv.out_channels;
         int k  = conv.kernel_size;
+        int nb = 4;
+        const int filterDimA[4] = { conv.out_channels, conv.in_channels, conv.kernel_size, conv.kernel_size};
 
         checkHIPDNN(hipdnnSetTensor4dDescriptor(srcTensorDesc,
                                               HIPDNN_TENSOR_NCHW,
@@ -488,15 +487,12 @@ struct TrainingContext
                                               n, c,
                                               h, w));
 
-        checkHIPDNN(hipdnnSetFilter4dDescriptor(filterDesc,
+        checkHIPDNN(hipdnnSetFilterNdDescriptor(filterDesc,
                                               HIPDNN_DATA_FLOAT,
                                               HIPDNN_TENSOR_NCHW,
-                                              oc,
-                                              c, 
-                                              k,
-                                              conv.kernel_size));
+                                              nb,
+                                              filterDimA));;
 
-#if HIPDNN_MAJOR > 5
         checkHIPDNN(hipdnnSetConvolution2dDescriptor(convDesc,
                                                    0, 0,
                                                    1, 1,
@@ -504,7 +500,6 @@ struct TrainingContext
                                                    HIPDNN_CROSS_CORRELATION,
                                                    HIPDNN_DATA_FLOAT));
 
-#endif
 
         // Find dimension of convolution output
         checkHIPDNN(hipdnnGetConvolution2dForwardOutputDim(convDesc,
@@ -517,6 +512,7 @@ struct TrainingContext
                                               HIPDNN_DATA_FLOAT,
                                               n, c,
                                               h, w));
+
         checkHIPDNN(hipdnnGetConvolutionForwardAlgorithm(hipdnnHandle,
                                                        srcTensorDesc,
                                                        filterDesc,
@@ -525,7 +521,7 @@ struct TrainingContext
                                                        HIPDNN_CONVOLUTION_FWD_PREFER_FASTEST,
                                                        0,
                                                        &algo));
-        
+
         checkHIPDNN(hipdnnGetConvolutionForwardWorkspaceSize(hipdnnHandle,
                                                            srcTensorDesc,
                                                            filterDesc,
@@ -539,29 +535,32 @@ struct TrainingContext
 
     void ForwardPropagation(float *data, float *conv1, float *pool1, float *conv2, float *pool2, float *fc1, float *fc1relu,
                             float *fc2, float *result,
-                            float *pconv1, float *pconv1bias, 
-                            float *pconv2, float *pconv2bias, 
+                            float *pconv1, float *pconv1bias,
+                            float *pconv2, float *pconv2bias,
                             float *pfc1, float *pfc1bias,
                             float *pfc2, float *pfc2bias, void *workspace, float *onevec)
-    {        
+    {
         float alpha = 1.0f, beta = 0.0f;
         checkHIPErrors(hipSetDevice(m_gpuid));
 
         // Conv1 layer
+
         checkHIPDNN(hipdnnConvolutionForward(hipdnnHandle, &alpha, dataTensor,
-                                           data, conv1filterDesc, pconv1, conv1Desc, 
+                                           data, conv1filterDesc, pconv1, conv1Desc,
                                            conv1algo, workspace, m_workspaceSize, &beta,
                                            conv1Tensor, conv1));
-        checkHIPDNN(hipdnnAddTensor(hipdnnHandle, &alpha, conv1BiasTensor,
+										   
+       checkHIPDNN(hipdnnAddTensor(hipdnnHandle, &alpha, conv1BiasTensor,
                                   pconv1bias, &alpha, conv1Tensor, conv1));
+
 
         // Pool1 layer
         checkHIPDNN(hipdnnPoolingForward(hipdnnHandle, poolDesc, &alpha, conv1Tensor,
-                                       conv1, &beta, pool1Tensor, pool1));
+                                       conv1, &beta, pool1Tensor, pool1, true));
 
         // Conv2 layer
         checkHIPDNN(hipdnnConvolutionForward(hipdnnHandle, &alpha, pool1Tensor,
-                                           pool1, conv2filterDesc, pconv2, conv2Desc, 
+                                           pool1, conv2filterDesc, pconv2, conv2Desc,
                                            conv2algo, workspace, m_workspaceSize, &beta,
                                            conv2Tensor, conv2));
         checkHIPDNN(hipdnnAddTensor(hipdnnHandle, &alpha, conv2BiasTensor,
@@ -569,7 +568,7 @@ struct TrainingContext
 
         // Pool2 layer
         checkHIPDNN(hipdnnPoolingForward(hipdnnHandle, poolDesc, &alpha, conv2Tensor,
-                                       conv2, &beta, pool2Tensor, pool2));
+                                       conv2, &beta, pool2Tensor, pool2, true));
 
         // FC1 layer
         // Forward propagate neurons using weights (fc1 = pfc1'*pool2)
@@ -617,7 +616,7 @@ struct TrainingContext
     }
 
     size_t SetBwdConvolutionTensors(hipdnnTensorDescriptor_t& srcTensorDesc, hipdnnTensorDescriptor_t& dstTensorDesc,
-                                    hipdnnFilterDescriptor_t& filterDesc, hipdnnConvolutionDescriptor_t& convDesc, 
+                                    hipdnnTensorDescriptor_t& filterDesc, hipdnnConvolutionDescriptor_t& convDesc,
                                     hipdnnConvolutionBwdFilterAlgo_t *falgo, hipdnnConvolutionBwdDataAlgo_t *dalgo)
     {
         size_t sizeInBytes = 0, tmpsize = 0;
@@ -625,12 +624,12 @@ struct TrainingContext
         // If backprop filter algorithm was requested
         if (falgo)
         {
-            checkHIPDNN(hipdnnGetConvolutionBackwardFilterAlgorithm(
+             checkHIPDNN(hipdnnGetConvolutionBackwardFilterAlgorithm(
                 hipdnnHandle, srcTensorDesc, dstTensorDesc, convDesc, filterDesc,
                 HIPDNN_CONVOLUTION_BWD_FILTER_PREFER_FASTEST, 0, falgo));
 
             checkHIPDNN(hipdnnGetConvolutionBackwardFilterWorkspaceSize(
-                hipdnnHandle, srcTensorDesc, dstTensorDesc, convDesc, filterDesc, 
+                hipdnnHandle, srcTensorDesc, dstTensorDesc, convDesc, filterDesc,
                 *falgo, &tmpsize));
 
             sizeInBytes = std::max(sizeInBytes, tmpsize);
@@ -644,12 +643,12 @@ struct TrainingContext
                 HIPDNN_CONVOLUTION_BWD_DATA_PREFER_FASTEST, 0, dalgo));
 
             checkHIPDNN(hipdnnGetConvolutionBackwardDataWorkspaceSize(
-                hipdnnHandle, filterDesc, dstTensorDesc, convDesc, srcTensorDesc, 
+                hipdnnHandle, filterDesc, dstTensorDesc, convDesc, srcTensorDesc,
                 *dalgo, &tmpsize));
 
             sizeInBytes = std::max(sizeInBytes, tmpsize);
         }
-        
+
         return sizeInBytes;
     }
 
@@ -665,20 +664,20 @@ struct TrainingContext
                          float *gfc1, float *gfc1bias, float *dfc1, float *dfc1relu,
                          float *gfc2, float *gfc2bias, float *dfc2,
                          void *workspace, float *onevec)
-    {    
+    {
         float alpha = 1.0f, beta = 0.0f;
 
-        float scalVal = 1.0f / static_cast<float>(m_batchSize);
+       float scalVal = 1.0f / static_cast<float>(m_batchSize);
 
         checkHIPErrors(hipSetDevice(m_gpuid));
 
         // Initialization (using the training error function)
         checkHIPErrors(hipMemcpyAsync(dloss_data, fc2smax, sizeof(float) * m_batchSize * ref_fc2.outputs, hipMemcpyDeviceToDevice));
-        
+
         // Softmax layer
         // SoftmaxLossBackprop<<<RoundUp(m_batchSize, BW), BW>>>(labels, ref_fc2.outputs, m_batchSize, dloss_data);
         hipLaunchKernelGGL(SoftmaxLossBackprop,RoundUp(m_batchSize, BW), BW, 0, 0, labels, ref_fc2.outputs, m_batchSize, dloss_data);
-        
+
         // Accounting for batch size in SGD
         checkHIPErrors(hipblasSscal(hipblasHandle, ref_fc2.outputs * m_batchSize, &scalVal, dloss_data, 1));
 
@@ -692,7 +691,7 @@ struct TrainingContext
         // Compute derivative with respect to data (for previous layer): pfc2*dfc2smax (500x10*10xN)
         checkHIPErrors(hipblasSgemm(hipblasHandle, HIPBLAS_OP_N, HIPBLAS_OP_N, ref_fc2.inputs, m_batchSize, ref_fc2.outputs,
                                     &alpha, pfc2, ref_fc2.inputs, dloss_data, ref_fc2.outputs, &beta, dfc2, ref_fc2.inputs));
-        
+
         // ReLU activation
         checkHIPDNN(hipdnnActivationBackward(hipdnnHandle, fc1Activation, &alpha,
                                            fc1Tensor, fc1relu, fc1Tensor, dfc2,
@@ -710,34 +709,34 @@ struct TrainingContext
                                     &alpha, pfc1, ref_fc1.inputs, dfc1relu, ref_fc1.outputs, &beta, dfc1, ref_fc1.inputs));
 
         // Pool2 layer
-        checkHIPDNN(hipdnnPoolingBackward(hipdnnHandle, poolDesc, &alpha, 
+        checkHIPDNN(hipdnnPoolingBackward(hipdnnHandle, poolDesc, &alpha,
                                         pool2Tensor, pool2, pool2Tensor, dfc1,
                                         conv2Tensor, conv2, &beta, conv2Tensor, dpool2));
-        
+
         // Conv2 layer
         checkHIPDNN(hipdnnConvolutionBackwardBias(hipdnnHandle, &alpha, conv2Tensor,
                                                 dpool2, &beta, conv2BiasTensor, gconv2bias));
 
-        
+
         checkHIPDNN(hipdnnConvolutionBackwardFilter(hipdnnHandle, &alpha, pool1Tensor,
                                                   pool1, conv2Tensor, dpool2, conv2Desc,
                                                   conv2bwfalgo, workspace, m_workspaceSize,
                                                   &beta, conv2filterDesc, gconv2));
-    
-        checkHIPDNN(hipdnnConvolutionBackwardData(hipdnnHandle, &alpha, conv2filterDesc,
+
+       checkHIPDNN(hipdnnConvolutionBackwardData(hipdnnHandle, &alpha, conv2filterDesc,
                                                 pconv2, conv2Tensor, dpool2, conv2Desc, 
                                                 conv2bwdalgo, workspace, m_workspaceSize,
                                                 &beta, pool1Tensor, dconv2));
-        
+
         // Pool1 layer
-        checkHIPDNN(hipdnnPoolingBackward(hipdnnHandle, poolDesc, &alpha, 
+        checkHIPDNN(hipdnnPoolingBackward(hipdnnHandle, poolDesc, &alpha,
                                         pool1Tensor, pool1, pool1Tensor, dconv2,
                                         conv1Tensor, conv1, &beta, conv1Tensor, dpool1));
-        
+
         // Conv1 layer
         checkHIPDNN(hipdnnConvolutionBackwardBias(hipdnnHandle, &alpha, conv1Tensor,
                                                 dpool1, &beta, conv1BiasTensor, gconv1bias));
-        
+
         checkHIPDNN(hipdnnConvolutionBackwardFilter(hipdnnHandle, &alpha, dataTensor,
                                                   data, conv1Tensor, dpool1, conv1Desc,
                                                   conv1bwfalgo, workspace, m_workspaceSize,
@@ -756,7 +755,7 @@ struct TrainingContext
                        float *gconv2, float *gconv2bias,
                        float *gfc1, float *gfc1bias,
                        float *gfc2, float *gfc2bias)
-    {    
+    {
         float alpha = -learning_rate;
 
         checkHIPErrors(hipSetDevice(m_gpuid));
@@ -801,13 +800,13 @@ int main(int argc, char **argv)
 
     // Open input data
     printf("Reading input data\n");
-    
+
     // Read dataset sizes
     size_t train_size = ReadUByteDataset(FLAGS_train_images.c_str(), FLAGS_train_labels.c_str(), nullptr, nullptr, width, height);
     size_t test_size = ReadUByteDataset(FLAGS_test_images.c_str(), FLAGS_test_labels.c_str(), nullptr, nullptr, width, height);
     if (train_size == 0)
         return 1;
-    
+
     std::vector<uint8_t> train_images(train_size * width * height * channels), train_labels(train_size);
     std::vector<uint8_t> test_images(test_size * width * height * channels), test_labels(test_size);
 
@@ -849,7 +848,7 @@ int main(int argc, char **argv)
 
     // Initialize CUDNN/HIPBLAS training context
     TrainingContext context(FLAGS_gpu, FLAGS_batch_size, conv1, pool1, conv2, pool2, fc1, fc2);
-    
+
     // Determine initial network structure
     bool bRet = true;
     if (FLAGS_pretrained)
@@ -893,9 +892,9 @@ int main(int argc, char **argv)
         for (auto&& iter : fc2.pbias)
             iter = static_cast<float>(dfc2(gen));
     }
-    
+
     /////////////////////////////////////////////////////////////////////////////
-    // Create GPU data structures    
+    // Create GPU data structures
 
     // Forward propagation data
     float *d_data, *d_labels, *d_conv1, *d_pool1, *d_conv2, *d_pool2, *d_fc1, *d_fc1relu, *d_fc2, *d_fc2smax;
@@ -907,15 +906,15 @@ int main(int argc, char **argv)
     checkHIPErrors(hipMalloc(&d_pool1,   sizeof(float) * context.m_batchSize * conv1.out_channels * (conv1.out_height / pool1.stride) * (conv1.out_width / pool1.stride)));
     checkHIPErrors(hipMalloc(&d_conv2,   sizeof(float) * context.m_batchSize * conv2.out_channels * conv2.out_height                  * conv2.out_width));
     checkHIPErrors(hipMalloc(&d_pool2,   sizeof(float) * context.m_batchSize * conv2.out_channels * (conv2.out_height / pool2.stride) * (conv2.out_width / pool2.stride)));
-    checkHIPErrors(hipMalloc(&d_fc1,     sizeof(float) * context.m_batchSize * fc1.outputs));    
+    checkHIPErrors(hipMalloc(&d_fc1,     sizeof(float) * context.m_batchSize * fc1.outputs));
     checkHIPErrors(hipMalloc(&d_fc1relu, sizeof(float) * context.m_batchSize * fc1.outputs));
     checkHIPErrors(hipMalloc(&d_fc2,     sizeof(float) * context.m_batchSize * fc2.outputs));
-    checkHIPErrors(hipMalloc(&d_fc2smax, sizeof(float) * context.m_batchSize * fc2.outputs));    
+    checkHIPErrors(hipMalloc(&d_fc2smax, sizeof(float) * context.m_batchSize * fc2.outputs));
 
     // Network parameters
     float *d_pconv1, *d_pconv1bias, *d_pconv2, *d_pconv2bias;
     float *d_pfc1, *d_pfc1bias, *d_pfc2, *d_pfc2bias;
-    
+
     checkHIPErrors(hipMalloc(&d_pconv1,     sizeof(float) * conv1.pconv.size()));
     checkHIPErrors(hipMalloc(&d_pconv1bias, sizeof(float) * conv1.pbias.size()));
     checkHIPErrors(hipMalloc(&d_pconv2,     sizeof(float) * conv2.pconv.size()));
@@ -923,21 +922,21 @@ int main(int argc, char **argv)
     checkHIPErrors(hipMalloc(&d_pfc1,       sizeof(float) * fc1.pneurons.size()));
     checkHIPErrors(hipMalloc(&d_pfc1bias,   sizeof(float) * fc1.pbias.size()));
     checkHIPErrors(hipMalloc(&d_pfc2,       sizeof(float) * fc2.pneurons.size()));
-    checkHIPErrors(hipMalloc(&d_pfc2bias,   sizeof(float) * fc2.pbias.size()));    
-    
+    checkHIPErrors(hipMalloc(&d_pfc2bias,   sizeof(float) * fc2.pbias.size()));
+
     // Network parameter gradients
     float *d_gconv1, *d_gconv1bias, *d_gconv2, *d_gconv2bias;
     float *d_gfc1, *d_gfc1bias, *d_gfc2, *d_gfc2bias;
-    
+
     checkHIPErrors(hipMalloc(&d_gconv1,     sizeof(float) * conv1.pconv.size()));
     checkHIPErrors(hipMalloc(&d_gconv1bias, sizeof(float) * conv1.pbias.size()));
     checkHIPErrors(hipMalloc(&d_gconv2,     sizeof(float) * conv2.pconv.size()));
     checkHIPErrors(hipMalloc(&d_gconv2bias, sizeof(float) * conv2.pbias.size()));
     checkHIPErrors(hipMalloc(&d_gfc1,       sizeof(float) * fc1.pneurons.size()));
-    checkHIPErrors(hipMalloc(&d_gfc1bias,   sizeof(float) * fc1.pbias.size()));    
+    checkHIPErrors(hipMalloc(&d_gfc1bias,   sizeof(float) * fc1.pbias.size()));
     checkHIPErrors(hipMalloc(&d_gfc2,       sizeof(float) * fc2.pneurons.size()));
     checkHIPErrors(hipMalloc(&d_gfc2bias,   sizeof(float) * fc2.pbias.size()));
-    
+
     // Differentials w.r.t. data
     float *d_dpool1, *d_dpool2, *d_dconv2, *d_dfc1, *d_dfc1relu, *d_dfc2, *d_dfc2smax, *d_dlossdata;
     //                         Buffer     | Element       | N                   | C                  | H                                 | W
@@ -950,13 +949,13 @@ int main(int argc, char **argv)
     checkHIPErrors(hipMalloc(&d_dfc2,     sizeof(float) * context.m_batchSize * fc2.inputs));
     checkHIPErrors(hipMalloc(&d_dfc2smax, sizeof(float) * context.m_batchSize * fc2.outputs));
     checkHIPErrors(hipMalloc(&d_dlossdata,sizeof(float) * context.m_batchSize * fc2.outputs));
-    
+
     // Temporary buffers and workspaces
     float *d_onevec;
-    void *d_hipdnn_workspace = nullptr;    
+    void *d_hipdnn_workspace = nullptr;
     checkHIPErrors(hipMalloc(&d_onevec, sizeof(float)* context.m_batchSize));
     if (context.m_workspaceSize > 0)
-        checkHIPErrors(hipMalloc(&d_hipdnn_workspace, context.m_workspaceSize));    
+        checkHIPErrors(hipMalloc(&d_hipdnn_workspace, context.m_workspaceSize));
 
     /////////////////////////////////////////////////////////////////////////////
 
@@ -969,18 +968,18 @@ int main(int argc, char **argv)
     checkHIPErrors(hipMemcpyAsync(d_pfc1bias, &fc1.pbias[0],     sizeof(float) * fc1.pbias.size(),    hipMemcpyHostToDevice));
     checkHIPErrors(hipMemcpyAsync(d_pfc2, &fc2.pneurons[0],      sizeof(float) * fc2.pneurons.size(), hipMemcpyHostToDevice));
     checkHIPErrors(hipMemcpyAsync(d_pfc2bias, &fc2.pbias[0],     sizeof(float) * fc2.pbias.size(),    hipMemcpyHostToDevice));
-    
+
     // Fill one-vector with ones
     //FillOnes<<<RoundUp(context.m_batchSize, BW), BW>>>(d_onevec, context.m_batchSize);
-    hipLaunchKernelGGL(FillOnes,RoundUp(context.m_batchSize, BW), BW, 0, 0, d_onevec, context.m_batchSize);  
-    
+    hipLaunchKernelGGL(FillOnes,RoundUp(context.m_batchSize, BW), BW, 0, 0, d_onevec, context.m_batchSize);
+
     printf("Preparing dataset\n");
-    
+
     // Normalize training set to be in [0,1]
     std::vector<float> train_images_float(train_images.size()), train_labels_float(train_size);
     for (size_t i = 0; i < train_size * channels * width * height; ++i)
         train_images_float[i] = (float)train_images[i] / 255.0f;
-    
+
     for (size_t i = 0; i < train_size; ++i)
         train_labels_float[i] = (float)train_labels[i];
 
@@ -999,9 +998,9 @@ int main(int argc, char **argv)
                                         sizeof(float) * context.m_batchSize * channels * width * height, hipMemcpyHostToDevice));
         checkHIPErrors(hipMemcpyAsync(d_labels, &train_labels_float[imageid * context.m_batchSize],
                                         sizeof(float) * context.m_batchSize, hipMemcpyHostToDevice));
-        
+
         // Forward propagation
-        context.ForwardPropagation(d_data, d_conv1, d_pool1, d_conv2, d_pool2, d_fc1, d_fc1relu, d_fc2, d_fc2smax, 
+       context.ForwardPropagation(d_data, d_conv1, d_pool1, d_conv2, d_pool2, d_fc1, d_fc1relu, d_fc2, d_fc2smax,
                                    d_pconv1, d_pconv1bias, d_pconv2, d_pconv2bias, d_pfc1, d_pfc1bias, d_pfc2, d_pfc2bias,
                                    d_hipdnn_workspace, d_onevec);
 
@@ -1024,7 +1023,7 @@ int main(int argc, char **argv)
     auto t2 = std::chrono::high_resolution_clock::now();
 
     printf("Iteration time: %f ms\n", std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count() / 1000.0f / FLAGS_iterations);
-    
+
     if (FLAGS_save_data)
     {
         // Copy trained weights from GPU to CPU
@@ -1036,7 +1035,7 @@ int main(int argc, char **argv)
         checkHIPErrors(hipMemcpy(&fc1.pbias[0], d_pfc1bias, sizeof(float) * fc1.pbias.size(), hipMemcpyDeviceToHost));
         checkHIPErrors(hipMemcpy(&fc2.pneurons[0], d_pfc2, sizeof(float) * fc2.pneurons.size(), hipMemcpyDeviceToHost));
         checkHIPErrors(hipMemcpy(&fc2.pbias[0], d_pfc2bias, sizeof(float) * fc2.pbias.size(), hipMemcpyDeviceToHost));
-      
+
         // Now save data
         printf("Saving data to file\n");
         conv1.ToFile("conv1");
@@ -1044,14 +1043,14 @@ int main(int argc, char **argv)
         fc1.ToFile("ip1");
         fc2.ToFile("ip2");
     }
-    
+
 
     float classification_error = 1.0f;
 
     int classifications = FLAGS_classify;
     if (classifications < 0)
         classifications = (int)test_size;
-    
+
     // Test the resulting neural network's classification
     if (classifications > 0)
     {
@@ -1074,7 +1073,7 @@ int main(int argc, char **argv)
                 data[j] = (float)test_images[i * width*height*channels + j] / 255.0f;
 
             checkHIPErrors(hipMemcpyAsync(d_data, &data[0], sizeof(float) * width * height, hipMemcpyHostToDevice));
-            
+
             // Forward propagate test image
             test_context.ForwardPropagation(d_data, d_conv1, d_pool1, d_conv2, d_pool2, d_fc1, d_fc1relu, d_fc2, d_fc2smax,
                                             d_pconv1, d_pconv1bias, d_pconv2, d_pconv2bias, d_pfc1, d_pfc1bias,
@@ -1100,7 +1099,7 @@ int main(int argc, char **argv)
 
         printf("Classification result: %.2f%% error (used %d images)\n", classification_error * 100.0f, (int)classifications);
     }
-        
+
     // Free data structures
     checkHIPErrors(hipFree(d_data));
     checkHIPErrors(hipFree(d_conv1));
@@ -1129,7 +1128,7 @@ int main(int argc, char **argv)
     checkHIPErrors(hipFree(d_dfc2));
     checkHIPErrors(hipFree(d_dpool1));
     checkHIPErrors(hipFree(d_dconv2));
-    checkHIPErrors(hipFree(d_dpool2));    
+    checkHIPErrors(hipFree(d_dpool2));
     checkHIPErrors(hipFree(d_labels));
     checkHIPErrors(hipFree(d_dlossdata));
     checkHIPErrors(hipFree(d_onevec));
