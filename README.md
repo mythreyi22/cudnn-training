@@ -1,38 +1,32 @@
-A CUDNN minimal deep learning training code sample using LeNet.
+A HIPDNN minimal deep learning training code sample using LeNet.
 
 Prerequisites
 =============
 
 * C++11 capable compiler (Visual Studio 2013, GCC 4.9 etc.) (for chrono and random)
-* CUDA (6.5 or newer): https://developer.nvidia.com/cuda-downloads
-* CUDNN (v5, v6): https://developer.nvidia.com/cuDNN/
+* For NV - CUDA (6.5 or newer): https://developer.nvidia.com/cuda-downloads
+* HIPDNN
 * MNIST dataset: http://yann.lecun.com/exdb/mnist/
-* (optional) gflags: https://github.com/gflags/gflags
 
-Set the CUDNN_PATH environment variable to where CUDNN is installed.
+Set the HIPDNN_PATH environment variable to where HIPDNN is installed.
 
 
 Compilation
 ===========
 
-The project can either be compiled with CMake (cross-platform) or Visual Studio.
-
 To compile with CMake, run the following commands:
 ```bash
-~: $ cd cudnn-training/
-~/cudnn-training: $ mkdir build
-~/cudnn-training: $ cd build/
-~/cudnn-training/build: $ cmake ..
-~/cudnn-training/build: $ make
+~: $ cd hipdnn-training/
+~/hipdnn-training: $ mkdir build
+~/hipdnn-training: $ cd build/
+~/hipdnn-training/build: $ cmake ..
+~/hipdnn-training/build: $ make
 ```
 
-If compiling under linux, make sure to either set the ```CUDNN_PATH``` environment variable to the path CUDNN is installed to, or extract CUDNN to the CUDA toolkit path.
-
-To enable gflags support, uncomment the line in CMakeLists.txt. In the Visual Studio project, define the macro ```USE_GFLAGS```.
+If compiling under linux, make sure to either set the ```HIPDNN_PATH``` environment variable to the path HIPDNN is installed.
 
 Running
 =======
 
-Extract the MNIST training and test set files (*-ubyte) to a directory (if gflags are not used, the default is the current path).
+Extract the MNIST training and test set files (*-ubyte) to a directory (default is the current path).
 
-You can also load and save pre-trained weights (e.g., published along with CUDNN), using the "pretrained" and "save_data" flags respectively.
