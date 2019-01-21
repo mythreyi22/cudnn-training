@@ -79,8 +79,6 @@ void SavePGMFile(const unsigned char *data, size_t width, size_t height, const c
 
 //////////////////////////////////////////////////////////////////////////////
 // Error handling
-// Adapted from the CUDNN classification code
-// sample: https://developer.nvidia.com/cuDNN
 
 #define FatalError(s) do {                                             \
     std::stringstream _where, _message;                                \
@@ -94,7 +92,7 @@ void SavePGMFile(const unsigned char *data, size_t width, size_t height, const c
 #define checkHIPDNN(status) do {                                        \
     std::stringstream _error;                                          \
     if (status != HIPDNN_STATUS_SUCCESS) {                              \
-      _error << "CUDNN failure: " << hipdnnGetErrorString(status);      \
+      _error << "HIPDNN failure: " << hipdnnGetErrorString(status);      \
       FatalError(_error.str());                                        \
     }                                                                  \
 } while(0)
@@ -121,7 +119,7 @@ DEFINE_int32(classify, -1, "Number of images to classify to compute error rate (
 DEFINE_uint64(batch_size, 32, "Batch size for training");
 
 // Filenames
-DEFINE_bool(pretrained, false, "Use the pretrained CUDNN model as input");
+DEFINE_bool(pretrained, false, "Use the pretrained HIPDNN model as input");
 DEFINE_bool(save_data, false, "Save pretrained weights to file");
 DEFINE_string(train_images, "train-images-idx3-ubyte", "Training images filename");
 DEFINE_string(train_labels, "train-labels-idx1-ubyte", "Training labels filename");
@@ -332,7 +330,7 @@ __global__ void SoftmaxLossBackprop(const float *label, int num_labels, int batc
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-// CUDNN/HIPBLAS training context
+// HIPDNN/HIPBLAS training context
 
 struct TrainingContext
 {
@@ -365,7 +363,7 @@ struct TrainingContext
     {
         m_batchSize = batch_size;
 
-        // Create HIPBLAS and CUDNN handles
+        // Create HIPBLAS and HIPDNN handles
         checkHIPErrors(hipSetDevice(gpuid));
         checkHIPErrors(hipblasCreate(&hipblasHandle));
         checkHIPDNN(hipdnnCreate(&hipdnnHandle));
@@ -846,7 +844,7 @@ int main(int argc, char **argv)
                             500);
     FullyConnectedLayer fc2(fc1.outputs, 10);
 
-    // Initialize CUDNN/HIPBLAS training context
+    // Initialize HIPDNN/HIPBLAS training context
     TrainingContext context(FLAGS_gpu, FLAGS_batch_size, conv1, pool1, conv2, pool2, fc1, fc2);
 
     // Determine initial network structure
